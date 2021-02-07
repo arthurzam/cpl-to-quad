@@ -52,7 +52,6 @@
 %code {
     #include "driver.h"
 	#include "assembly.h"
-	static int yyerror(const char *);
     static VAR_TYPE upcast(VAR_TYPE first, VAR_TYPE second);
 }
 %define api.token.prefix {TOK_}
@@ -208,13 +207,14 @@ boolfactor : NOT "(" boolexpr ")" {
 				 auto type = upcast($1.type, $3.type);
 				 auto inst_set = g_asm_instructions[(int)type];
 				 auto tmp = drv.newtemp();
+				 auto [operand1, operand2] = drv.auto_upcast(tmp, $1, $3);
 				 switch ($2) {
-					 case REL_OPS::EQ: drv.gen(inst_set.eql, tmp, $1.addr, $3.addr); break;
-					 case REL_OPS::NE: drv.gen(inst_set.nql, tmp, $1.addr, $3.addr); break;
-					 case REL_OPS::LT: drv.gen(inst_set.lss, tmp, $1.addr, $3.addr); break;
-					 case REL_OPS::GT: drv.gen(inst_set.grt, tmp, $1.addr, $3.addr); break;
-					 case REL_OPS::LE: drv.gen(inst_set.grt, tmp, $3.addr, $1.addr); break;
-					 case REL_OPS::GE: drv.gen(inst_set.lss, tmp, $3.addr, $1.addr); break;
+					 case REL_OPS::EQ: drv.gen(inst_set.eql, tmp, operand1, operand2); break;
+					 case REL_OPS::NE: drv.gen(inst_set.nql, tmp, operand1, operand2); break;
+					 case REL_OPS::LT: drv.gen(inst_set.lss, tmp, operand1, operand2); break;
+					 case REL_OPS::GT: drv.gen(inst_set.grt, tmp, operand1, operand2); break;
+					 case REL_OPS::LE: drv.gen(inst_set.grt, tmp, operand2, operand1); break;
+					 case REL_OPS::GE: drv.gen(inst_set.lss, tmp, operand2, operand1); break;
 				 }
 				 $$.falselist.push_back(drv.get_nextinst());
 				 drv.gen("JMPZ", OPERAND_PLACEHOLDER, std::move(tmp));
@@ -227,15 +227,8 @@ expression : term { $$ = $1; }
             $$.type = upcast($1.type, $3.type);
             $$.addr = drv.newtemp();
             const char *op = ($2 == ARITHMETIC_OPS::ADD ? g_asm_instructions[(int)$$.type].add : g_asm_instructions[(int)$$.type].sub);
-            if ($$.type != $1.type) {
-				drv.gen("ITOR", $$.addr, $1.addr);
-				drv.gen(op, $$.addr, $$.addr, $3.addr);
-            } else if ($$.type != $3.type) {
-				drv.gen("ITOR", $$.addr, $3.addr);
-				drv.gen(op, $$.addr, $1.addr, $$.addr);
-            } else {
-				drv.gen(op, $$.addr, $1.addr, $3.addr);
-            }
+			auto [operand1, operand2] = drv.auto_upcast($$.addr, $1, $3);
+			drv.gen(op, $$.addr, operand1, operand2);
 	}
 
 term : factor { $$ = $1; }
@@ -243,15 +236,8 @@ term : factor { $$ = $1; }
             $$.type = upcast($1.type, $3.type);
             $$.addr = drv.newtemp();
             const char *op = ($2 == ARITHMETIC_OPS::MUL ? g_asm_instructions[(int)$$.type].mul : g_asm_instructions[(int)$$.type].div);
-			if ($$.type != $1.type) {
-				drv.gen("ITOR", $$.addr, $1.addr);
-				drv.gen(op, $$.addr, $$.addr, $3.addr);
-			} else if ($$.type != $3.type) {
-				drv.gen("ITOR", $$.addr, $3.addr);
-				drv.gen(op, $$.addr, $1.addr, $$.addr);
-			} else {
-				drv.gen(op, $$.addr, $1.addr, $3.addr);
-			}
+			auto [operand1, operand2] = drv.auto_upcast($$.addr, $1, $3);
+			drv.gen(op, $$.addr, operand1, operand2);
 	 }
 
 factor : "(" expression ")" { $$ = $2; }

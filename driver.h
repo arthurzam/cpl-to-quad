@@ -46,6 +46,8 @@ public:
 	std::string newtemp();
 	void backpatch(const std::vector<int> &list, int addr);
 
+	std::pair<const std::string&, const std::string&> auto_upcast(const std::string &tmp, const expression &first, const expression &second);
+
 	int get_nextinst() const {
 		return nextinst;
 	}

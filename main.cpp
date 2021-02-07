@@ -41,6 +41,19 @@ void driver::backpatch(const std::vector<int> &list, int addr) {
 	}
 }
 
+std::pair<const string &, const string &> driver::auto_upcast(const string &tmp, const expression &first, const expression &second) {
+	VAR_TYPE type = (first.type == VAR_TYPE::INT && second.type == VAR_TYPE::INT) ? VAR_TYPE::INT : VAR_TYPE::FLOAT;
+	if (type != first.type) {
+		gen("ITOR", tmp, first.addr);
+		return {tmp, second.addr};
+	} else if (type != second.type) {
+		gen("ITOR", tmp, second.addr);
+		return {first.addr, tmp};
+	} else {
+		return {first.addr, second.addr};
+	}
+}
+
 ostream &operator<<(ostream &os, const driver &drv) {
 	for (const auto &inst : drv.code) {
 		os << inst.op;
