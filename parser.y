@@ -5,6 +5,7 @@
 %define api.token.constructor
 %define parse.assert
 %defines
+%define parse.trace
 %param { driver& drv }
 
 %code requires {
@@ -42,10 +43,18 @@
     using pos = int;
     using addrlist = std::vector<pos>;
 
-    struct boolexpr {
-        using pos = int;
+	struct boolexpr {
         addrlist falselist, truelist;
     };
+
+	struct stmtaddrs {
+		addrlist nextlist, breaklist;
+	};
+
+	struct caselist {
+		std::vector<std::pair<int, std::string>> cases;
+		addrlist nextlist, breaklist;
+	};
 
     class driver;
 }
@@ -53,6 +62,8 @@
     #include "driver.h"
 	#include "assembly.h"
     static VAR_TYPE upcast(VAR_TYPE first, VAR_TYPE second);
+	template <typename T> static void mergelist(std::vector<T> &dst, std::vector<T> &&first, std::vector<T> &&second);
+	template <typename T> static void mergelist(std::vector<T> &dst, std::vector<T> &&addition);
 }
 %define api.token.prefix {TOK_}
 
@@ -66,17 +77,17 @@
 %token COMMA   ","
 %token ENDL    ";"
 
-%token BREAK
-%token CASE
-%token DEFAULT
-%token ELSE
-%token FLOAT
-%token IF
-%token INPUT
-%token INT
-%token OUTPUT
-%token SWITCH
-%token WHILE
+%token BREAK   "break"
+%token CASE    "case"
+%token DEFAULT "default"
+%token ELSE    "else"
+%token FLOAT   "float"
+%token IF      "if"
+%token INPUT   "input"
+%token INT     "int"
+%token OUTPUT  "output"
+%token SWITCH  "switch"
+%token WHILE   "while"
 
 %token <REL_OPS> RELOP
 %token <ARITHMETIC_OPS> ADDOP
@@ -95,12 +106,14 @@
 %type <expression> expression term factor
 %type <boolexpr> boolexpr boolterm boolfactor
 %type <int> mark_pos mark_goto
-%type <addrlist> stmt stmtlist if_stmt while_stmt break_stmt stmt_block
+%type <addrlist> while_stmt switch_stmt break_stmt
+%type <stmtaddrs> stmt stmtlist stmt_block if_stmt
+%type <caselist> caselist
 
 %%
 program : declarations stmt_block mark_pos {
 			drv.gen("HALT");
-			drv.backpatch($2, $3);
+			drv.backpatch($2.nextlist, $3);
 		}
 
 declarations : /* empty */ |
@@ -109,28 +122,35 @@ declarations : /* empty */ |
 declaration : idlist ":" type ";" {
 				for (const std::string &id : $1) {
                     if (!drv.symtable.emplace(id, $3).second) {
-                        std::cerr << @1 << ":" << "symbol '" << id << "' was already declared" << std::endl;
+						std::cerr << @1 << ": symbol '" << id << "' was already declared" << std::endl;
                     }
                 }
-			}
+			} | error ":" type ";" { std::cerr << @1 << ": Illegal identifier" << std::endl; }
+			| idlist ":" error ";" { std::cerr << @1 << ": Illegal type declaration" << std::endl; }
+			| error ";" { std::cerr << @1 << ": Illegal declaration" << std::endl; }
 
 idlist : idlist "," ID { $$ = std::move($1); $$.push_back(std::move($3)); }
 	   | ID            { $$.push_back(std::move($1)); }
 
-type : INT { $$ = VAR_TYPE::INT; }
-	 | FLOAT { $$ = VAR_TYPE::FLOAT; }
+type : "int" { $$ = VAR_TYPE::INT; }
+	 | "float" { $$ = VAR_TYPE::FLOAT; }
 
 stmt : assignment_stmt {}
 	 | input_stmt {}
 	 | output_stmt {}
 	 | if_stmt { $$ = std::move($1); }
-	 | while_stmt { $$ = std::move($1); }
-	 | switch_stmt {}
-	 | break_stmt {}
+	 | while_stmt { $$.nextlist = std::move($1); }
+	 | switch_stmt { $$.nextlist = std::move($1); }
+	 | break_stmt { $$.breaklist = std::move($1); }
 	 | stmt_block { $$ = std::move($1); }
 
 assignment_stmt : ID "=" expression ";" {
-				auto type = drv.symtable[$1];
+				auto iter = drv.symtable.find($1);
+				if (iter == drv.symtable.end()) {
+					std::cerr << @1 << ": Unknown identifier " << $1 << std::endl;
+					break;
+				}
+				auto type = iter->second;
 				if (type == $3.type)
 					drv.gen(g_asm_instructions[(int)type].assign, $1, $3.addr);
 				else if (type == VAR_TYPE::FLOAT) {
@@ -142,45 +162,68 @@ assignment_stmt : ID "=" expression ";" {
 				}
 			 }
 
-input_stmt : INPUT "(" ID ")" ";" {
+input_stmt : "input" "(" ID ")" ";" {
 				drv.gen(g_asm_instructions[(int)drv.symtable[$3]].input, $3);
 		   }
 
-output_stmt : OUTPUT "(" expression ")" ";" {
+output_stmt : "output" "(" expression ")" ";" {
 				 drv.gen(g_asm_instructions[(int)$3.type].output, $3.addr);
 			}
 
-if_stmt : IF "(" boolexpr ")" mark_pos stmt mark_goto ELSE mark_pos stmt {
+if_stmt : "if" "(" boolexpr ")" mark_pos stmt mark_goto "else" mark_pos stmt {
 			drv.backpatch($3.truelist, $5);
 			drv.backpatch($3.falselist, $9);
-			$$ = std::move($6);
-			$$.insert($$.end(), $10.begin(), $10.end());
-			$$.push_back($7);
+			mergelist($$.nextlist, std::move($6.nextlist), std::move($10.nextlist));
+			$$.nextlist.push_back($7);
+			mergelist($$.breaklist, std::move($6.breaklist), std::move($10.breaklist));
 		}
 
-while_stmt : WHILE mark_pos "(" boolexpr ")" mark_pos stmt {
-				 drv.backpatch($7, $2);
+while_stmt : "while" mark_pos "(" boolexpr ")" mark_pos stmt {
+				 drv.backpatch($7.nextlist, $2);
 				 drv.backpatch($4.truelist, $6);
-				 $$ = std::move($4.falselist);
+				 mergelist($$, std::move($4.falselist), std::move($7.breaklist)); // eat all breaks
 				 drv.gen("JUMP", std::to_string($2));
 			 }
 
-switch_stmt : SWITCH "(" expression ")" "{" caselist DEFAULT ':' stmtlist "}"
+switch_stmt : mark_goto "switch" "(" expression ")" "{" caselist "default" ":" mark_pos stmtlist mark_goto "}" {
+				if ($4.type != VAR_TYPE::INT) {
+					std::cerr << @4 << ": expression inside switch must be of int type" << std::endl;
+					break;
+				}
+				mergelist($$, std::move($7.breaklist), std::move($7.nextlist));
+				mergelist($$, std::move($11.breaklist));
+				mergelist($$, std::move($11.nextlist));
+				$$.push_back($12);
+				drv.backpatch({$1}, drv.get_nextinst());
 
-caselist : caselist CASE NUM_INT ":" stmtlist
-         | caselist CASE NUM_FLOAT ":" stmtlist
-		 | /* empty */
+				auto inst_set = g_asm_instructions[(int)$4.type];
+				std::string tmp = drv.newtemp();
+				for (const auto &[addr, value] : $7.cases) {
+					drv.gen(inst_set.nql, tmp, $4.addr, value);
+					drv.gen("JMPZ", std::to_string(addr), tmp);
+				}
+				drv.gen("JUMP", std::to_string($10)); // default
+			}
 
-break_stmt : BREAK ";" mark_goto {
-				$$.push_back($3);
-		   }
+caselist : caselist "case" NUM_INT ":" mark_pos stmtlist {
+				mergelist($$.breaklist, std::move($1.breaklist), std::move($6.breaklist));
+				drv.backpatch($1.nextlist, $5);
+				$$.nextlist = std::move($6.nextlist);
+				$$.cases = std::move($1.cases);
+				$$.cases.emplace_back($5, std::to_string($3));
+		} | caselist "case" NUM_FLOAT ":" stmtlist {
+				std::cerr << @3 << ": expression of case must be of int type" << std::endl;
+		} | /* empty */ { }
+
+break_stmt : "break" ";" mark_goto { $$.push_back($3); }
 
 stmt_block : "{" stmtlist "}" { $$ = std::move($2); }
 
 stmtlist : /* empty */ { }
 		 | stmtlist mark_pos stmt {
-				drv.backpatch($1, $2);
-				$$ = std::move($3);
+				drv.backpatch($1.nextlist, $2);
+				$$.nextlist = std::move($3.nextlist);
+				mergelist($$.breaklist, std::move($1.breaklist), std::move($3.breaklist));
 		 }
 
 boolexpr : boolexpr OR mark_pos boolterm {
@@ -193,8 +236,7 @@ boolexpr : boolexpr OR mark_pos boolterm {
 
 boolterm : boolterm AND mark_pos boolfactor{
 				 drv.backpatch($1.truelist, $3);
-				 $$.falselist = std::move($1.falselist);
-				 $$.falselist.insert($$.falselist.end(), $4.falselist.begin(), $4.falselist.end());
+				 mergelist($$.falselist, std::move($1.falselist), std::move($4.falselist));
 				 $$.truelist = std::move($4.truelist);
 			  }
 		  | boolfactor { $$ = std::move($1); }
@@ -232,7 +274,7 @@ expression : term { $$ = $1; }
 	}
 
 term : factor { $$ = $1; }
-    | term MULOP factor {
+	 | term MULOP factor {
             $$.type = upcast($1.type, $3.type);
             $$.addr = drv.newtemp();
             const char *op = ($2 == ARITHMETIC_OPS::MUL ? g_asm_instructions[(int)$$.type].mul : g_asm_instructions[(int)$$.type].div);
@@ -255,8 +297,13 @@ factor : "(" expression ")" { $$ = $2; }
             }
        }
        | ID {
-            $$.type = drv.symtable[$1];
-            $$.addr = std::move($1);
+				auto iter = drv.symtable.find($1);
+				if (iter == drv.symtable.end()) {
+					std::cerr << @1 << ": Unknown identifier " << $1 << std::endl;
+					break;
+				}
+				$$.type = iter->second;
+				$$.addr = std::move($1);
        }
        | NUM_INT {
             $$.type = VAR_TYPE::INT;
@@ -284,4 +331,15 @@ static VAR_TYPE upcast(VAR_TYPE first, VAR_TYPE second) {
     if (first == VAR_TYPE::INT && second == VAR_TYPE::INT)
         return VAR_TYPE::INT;
     return VAR_TYPE::FLOAT;
+}
+
+template <typename T>
+static void mergelist(std::vector<T> &dst, std::vector<T> &&first, std::vector<T> &&second) {
+	dst = std::move(first);
+	mergelist(dst, std::move(second));
+}
+
+template <typename T>
+static void mergelist(std::vector<T> &dst, std::vector<T> &&addition) {
+	dst.insert(dst.end(), std::make_move_iterator(addition.begin()), std::make_move_iterator(addition.end()));
 }

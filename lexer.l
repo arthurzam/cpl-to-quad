@@ -1,15 +1,14 @@
 %{
 	#include <cerrno>
-	#include <climits>
 	#include <cstdlib>
-	#include <cstring>
 	#include <string>
 	#include "driver.h"
 	#include "parser.hpp"
 	#define YY_USER_ACTION  loc.columns (yyleng); // Code run each time a pattern is matched.
 %}
 %x COMMENT
-%option noyywrap nounput noinput batch
+%option noyywrap nounput noinput
+ //%option batch never-interactive nounistd
 
 %%
 %{

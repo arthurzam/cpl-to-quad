@@ -17,6 +17,7 @@ driver::parse (const std::string &f)
   location.initialize(&file);
   scan_begin();
   yy::parser parse(*this);
+  //parse.set_debug_level (true);
   int res = parse();
   scan_end();
   return res;
@@ -69,10 +70,10 @@ ostream &operator<<(ostream &os, const driver &drv) {
 }
 
 
-int main()
+int main(int argc, char *argv[])
 {
 	driver drv;
-	drv.parse("-");
+	drv.parse(argc > 1 ? argv[1] : "-");
 	std::cout << drv;
 	return 0;
 }
