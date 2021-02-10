@@ -1,16 +1,15 @@
-#ifndef DRIVER_HH
-# define DRIVER_HH
-# include <string>
-# include <map>
-# include "parser.hpp"
+#ifndef DRIVER_H
+#define DRIVER_H
+#include <string>
+#include <map>
+#include "parser.hpp"
 
 # define YY_DECL yy::parser::symbol_type yylex (driver& drv)
 
 YY_DECL;
 
 #define OPERAND_PLACEHOLDER "@"
-class driver
-{
+class driver {
 private:
 	struct instruction {
 		const char *op;
@@ -27,6 +26,7 @@ private:
 	int tmp_counter = 0;
 
 	std::vector<instruction> code;
+	std::string file;
 public:
 
 	driver ();
@@ -34,7 +34,6 @@ public:
 	std::map<std::string, VAR_TYPE> symtable;
 
 	int parse (const std::string& f);
-	std::string file;
 
 	// Handling the scanner.
 	void scan_begin ();
@@ -54,4 +53,4 @@ public:
 
 	friend std::ostream &operator<<(std::ostream &os, const driver &drv);
 };
-#endif // ! DRIVER_HH
+#endif // ! DRIVER_H

@@ -1,24 +1,25 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.15)
 project(cpq LANGUAGES CXX)
 
 set (CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
+set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
 find_package(FLEX)
-find_package(BISON)
+find_package(BISON 3.2)
 
-BISON_TARGET(MyParser parser.y ${CMAKE_CURRENT_BINARY_DIR}/parser.cpp)
-FLEX_TARGET(MyScanner lexer.l  ${CMAKE_CURRENT_BINARY_DIR}/lexer.cpp)
-ADD_FLEX_BISON_DEPENDENCY(MyScanner MyParser)
+BISON_TARGET(CPL_Parser parser.y ${CMAKE_CURRENT_BINARY_DIR}/parser.cpp
+    DEFINES_FILE ${CMAKE_CURRENT_BINARY_DIR}/parser.hpp )
+FLEX_TARGET(CPL_Scanner lexer.l  ${CMAKE_CURRENT_BINARY_DIR}/lexer.cpp)
+ADD_FLEX_BISON_DEPENDENCY(CPL_Scanner CPL_Parser)
 
 add_executable(cpq
     main.cpp
     driver.h
     assembly.cpp
     assembly.h
-    ${BISON_MyParser_OUTPUTS}
-    ${FLEX_MyScanner_OUTPUTS}
+    ${BISON_CPL_Parser_OUTPUTS}
+    ${FLEX_CPL_Scanner_OUTPUTS}
 )
-
-target_link_libraries(cpq ${FLEX_LIBRARIES})
+set_property(TARGET cpq PROPERTY INTERPROCEDURAL_OPTIMIZATION True)

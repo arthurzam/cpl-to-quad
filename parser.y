@@ -9,9 +9,10 @@
 %param { driver& drv }
 
 %code requires {
-    #include <map>
 	#include <string>
 	#include <vector>
+
+	class driver;
 
     enum class REL_OPS {
         EQ = 0,
@@ -36,8 +37,7 @@
 
     struct expression {
         std::string addr;
-        VAR_TYPE type;
-        bool isConst;
+		VAR_TYPE type;
     };
 
     using pos = int;
@@ -55,15 +55,12 @@
 		std::vector<std::pair<int, std::string>> cases;
 		addrlist nextlist, breaklist;
 	};
-
-    class driver;
 }
 %code {
     #include "driver.h"
 	#include "assembly.h"
     static VAR_TYPE upcast(VAR_TYPE first, VAR_TYPE second);
-	template <typename T> static void mergelist(std::vector<T> &dst, std::vector<T> &&first, std::vector<T> &&second);
-	template <typename T> static void mergelist(std::vector<T> &dst, std::vector<T> &&addition);
+	template<typename T, typename ...Args> static void mergelist(std::vector<T> &dst, std::vector<T> &&op1, Args&&... args);
 }
 %define api.token.prefix {TOK_}
 
@@ -116,13 +113,13 @@ program : declarations stmt_block mark_pos {
 			drv.backpatch($2.nextlist, $3);
 		}
 
-declarations : /* empty */ |
+declarations : %empty |
 			 declarations declaration;
 
 declaration : idlist ":" type ";" {
 				for (const std::string &id : $1) {
-                    if (!drv.symtable.emplace(id, $3).second) {
-						std::cerr << @1 << ": symbol '" << id << "' was already declared" << std::endl;
+					if ( const auto& [iter, flag] = drv.symtable.emplace(std::move(id), $3); !flag) {
+						std::cerr << @1 << ": symbol '" << iter->first << "' was already declared" << std::endl;
                     }
                 }
 			} | error ":" type ";" { std::cerr << @1 << ": Illegal identifier" << std::endl; }
@@ -157,13 +154,17 @@ assignment_stmt : ID "=" expression ";" {
 					auto tmp = drv.newtemp();
 					drv.gen("ITOR", tmp, $3.addr);
 					drv.gen(g_asm_instructions[(int)type].assign, $1, tmp);
-				} else {
+				} else
 					std::cerr << @$ << ": assigning float into int " << $1 << std::endl;
-				}
 			 }
 
 input_stmt : "input" "(" ID ")" ";" {
-				drv.gen(g_asm_instructions[(int)drv.symtable[$3]].input, $3);
+				auto iter = drv.symtable.find($3);
+				if (iter == drv.symtable.end()) {
+					std::cerr << @3 << ": Unknown identifier " << $3 << std::endl;
+					break;
+				}
+				drv.gen(g_asm_instructions[(int)iter->second].input, $3);
 		   }
 
 output_stmt : "output" "(" expression ")" ";" {
@@ -190,16 +191,14 @@ switch_stmt : mark_goto "switch" "(" expression ")" "{" caselist "default" ":" m
 					std::cerr << @4 << ": expression inside switch must be of int type" << std::endl;
 					break;
 				}
-				mergelist($$, std::move($7.breaklist), std::move($7.nextlist));
-				mergelist($$, std::move($11.breaklist));
-				mergelist($$, std::move($11.nextlist));
+				mergelist($$, std::move($7.breaklist), std::move($7.nextlist), std::move($11.breaklist), std::move($11.nextlist));
 				$$.push_back($12);
 				drv.backpatch({$1}, drv.get_nextinst());
 
 				auto inst_set = g_asm_instructions[(int)$4.type];
 				std::string tmp = drv.newtemp();
 				for (const auto &[addr, value] : $7.cases) {
-					drv.gen(inst_set.nql, tmp, $4.addr, value);
+					drv.gen(inst_set.nql, tmp, $4.addr, std::move(value));
 					drv.gen("JMPZ", std::to_string(addr), tmp);
 				}
 				drv.gen("JUMP", std::to_string($10)); // default
@@ -213,39 +212,34 @@ caselist : caselist "case" NUM_INT ":" mark_pos stmtlist {
 				$$.cases.emplace_back($5, std::to_string($3));
 		} | caselist "case" NUM_FLOAT ":" stmtlist {
 				std::cerr << @3 << ": expression of case must be of int type" << std::endl;
-		} | /* empty */ { }
+		} | %empty { }
 
 break_stmt : "break" ";" mark_goto { $$.push_back($3); }
 
 stmt_block : "{" stmtlist "}" { $$ = std::move($2); }
 
-stmtlist : /* empty */ { }
-		 | stmtlist mark_pos stmt {
+stmtlist : stmtlist mark_pos stmt {
 				drv.backpatch($1.nextlist, $2);
 				$$.nextlist = std::move($3.nextlist);
 				mergelist($$.breaklist, std::move($1.breaklist), std::move($3.breaklist));
-		 }
+		 } | %empty { }
 
 boolexpr : boolexpr OR mark_pos boolterm {
 				drv.backpatch($1.falselist, $3);
-				$$.truelist = std::move($1.truelist);
-				$$.truelist.insert($$.truelist.end(), $4.truelist.begin(), $4.truelist.end());
 				$$.falselist = std::move($4.falselist);
-			 }
-		 | boolterm { $$ = std::move($1); }
+				mergelist($$.truelist, std::move($1.truelist), std::move($4.truelist));
+		} | boolterm { $$ = std::move($1); }
 
-boolterm : boolterm AND mark_pos boolfactor{
+boolterm : boolterm AND mark_pos boolfactor {
 				 drv.backpatch($1.truelist, $3);
-				 mergelist($$.falselist, std::move($1.falselist), std::move($4.falselist));
 				 $$.truelist = std::move($4.truelist);
-			  }
-		  | boolfactor { $$ = std::move($1); }
+				 mergelist($$.falselist, std::move($1.falselist), std::move($4.falselist));
+		} | boolfactor { $$ = std::move($1); }
 
 boolfactor : NOT "(" boolexpr ")" {
-                $$.truelist = $3.falselist;
-				$$.falselist = $3.truelist;
-		   }
-		   | expression RELOP expression mark_pos {
+				$$.truelist = std::move($3.falselist);
+				$$.falselist = std::move($3.truelist);
+		   } | expression RELOP expression mark_pos {
 				 auto type = upcast($1.type, $3.type);
 				 auto inst_set = g_asm_instructions[(int)type];
 				 auto tmp = drv.newtemp();
@@ -264,64 +258,57 @@ boolfactor : NOT "(" boolexpr ")" {
 				 drv.gen("JUMP", OPERAND_PLACEHOLDER);
 		   }
 
-expression : term { $$ = $1; }
-    | expression ADDOP term {
-            $$.type = upcast($1.type, $3.type);
-            $$.addr = drv.newtemp();
-            const char *op = ($2 == ARITHMETIC_OPS::ADD ? g_asm_instructions[(int)$$.type].add : g_asm_instructions[(int)$$.type].sub);
-			auto [operand1, operand2] = drv.auto_upcast($$.addr, $1, $3);
-			drv.gen(op, $$.addr, operand1, operand2);
-	}
+expression : term { $$ = std::move($1); }
+		| expression ADDOP term {
+				$$.type = upcast($1.type, $3.type);
+				$$.addr = drv.newtemp();
+				const char *op = ($2 == ARITHMETIC_OPS::ADD ? g_asm_instructions[(int)$$.type].add : g_asm_instructions[(int)$$.type].sub);
+				auto [operand1, operand2] = drv.auto_upcast($$.addr, $1, $3);
+				drv.gen(op, $$.addr, operand1, operand2);
+		}
 
-term : factor { $$ = $1; }
+term : factor { $$ = std::move($1); }
 	 | term MULOP factor {
-            $$.type = upcast($1.type, $3.type);
-            $$.addr = drv.newtemp();
-            const char *op = ($2 == ARITHMETIC_OPS::MUL ? g_asm_instructions[(int)$$.type].mul : g_asm_instructions[(int)$$.type].div);
+			$$.type = upcast($1.type, $3.type);
+			$$.addr = drv.newtemp();
+			const char *op = ($2 == ARITHMETIC_OPS::MUL ? g_asm_instructions[(int)$$.type].mul : g_asm_instructions[(int)$$.type].div);
 			auto [operand1, operand2] = drv.auto_upcast($$.addr, $1, $3);
 			drv.gen(op, $$.addr, operand1, operand2);
 	 }
 
-factor : "(" expression ")" { $$ = $2; }
+factor : "(" expression ")" { $$ = std::move($2); }
        | CAST "(" expression ")" {
             if ($1 == $3.type) {
-                $$ = $3;
+				$$ = std::move($3);
             } else if ($1 == VAR_TYPE::INT && $3.type == VAR_TYPE::FLOAT) {
                 $$.addr = drv.newtemp();
                 $$.type = $1;
-				drv.gen("RTOI", $$.addr, $3.addr);
+				drv.gen("RTOI", $$.addr, std::move($3.addr));
             } else if ($1 == VAR_TYPE::FLOAT && $3.type == VAR_TYPE::INT) {
                 $$.addr = drv.newtemp();
                 $$.type = $1;
-				drv.gen("ITOR", $$.addr, $3.addr);
+				drv.gen("ITOR", $$.addr, std::move($3.addr));
             }
-       }
-       | ID {
-				auto iter = drv.symtable.find($1);
-				if (iter == drv.symtable.end()) {
-					std::cerr << @1 << ": Unknown identifier " << $1 << std::endl;
-					break;
-				}
-				$$.type = iter->second;
-				$$.addr = std::move($1);
-       }
-       | NUM_INT {
+	   } | ID {
+			auto iter = drv.symtable.find($1);
+			if (iter == drv.symtable.end()) {
+				std::cerr << @1 << ": Unknown identifier " << $1 << std::endl;
+				break;
+			}
+			$$.type = iter->second;
+			$$.addr = std::move($1);
+	   } | NUM_INT {
             $$.type = VAR_TYPE::INT;
             $$.addr = drv.newtemp();
 			drv.gen("IASN", $$.addr, std::to_string($1));
-       }
-       | NUM_FLOAT {
+	   } | NUM_FLOAT {
            $$.type = VAR_TYPE::FLOAT;
            $$.addr = drv.newtemp();
 		   drv.gen("RASN", $$.addr, std::to_string($1));
 	   }
-mark_pos: /* empty */ {
-			$$ = drv.get_nextinst();
-		}
-mark_goto: /* empty */ {
-			$$ = drv.get_nextinst();
-			drv.gen("JUMP", OPERAND_PLACEHOLDER);
-		}
+
+mark_pos:  %empty { $$ = drv.get_nextinst(); }
+mark_goto: %empty { $$ = drv.get_nextinst(); drv.gen("JUMP", OPERAND_PLACEHOLDER); }
 %%
 void yy::parser::error(const location_type& l, const std::string& m) {
     std::cerr << l << ": " << m << '\n';
@@ -333,13 +320,8 @@ static VAR_TYPE upcast(VAR_TYPE first, VAR_TYPE second) {
     return VAR_TYPE::FLOAT;
 }
 
-template <typename T>
-static void mergelist(std::vector<T> &dst, std::vector<T> &&first, std::vector<T> &&second) {
-	dst = std::move(first);
-	mergelist(dst, std::move(second));
-}
-
-template <typename T>
-static void mergelist(std::vector<T> &dst, std::vector<T> &&addition) {
-	dst.insert(dst.end(), std::make_move_iterator(addition.begin()), std::make_move_iterator(addition.end()));
+template<typename T, typename ...Args>
+static void mergelist(std::vector<T> &dst, std::vector<T> &&op1, Args&&... args) {
+	dst = std::move(op1);
+	(dst.insert(dst.end(), std::make_move_iterator(args.begin()), std::make_move_iterator(args.end())), ...);
 }

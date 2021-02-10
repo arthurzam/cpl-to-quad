@@ -17,7 +17,7 @@
 %}
 [ \t\r]+	loc.step();
 \n+			loc.lines(yyleng); loc.step();
-<<EOF>>		return yy::parser::make_YYEOF (loc);
+<<EOF>>		return yy::parser::make_YYEOF(loc);
 
 "break"		return yy::parser::make_BREAK(loc);
 "case"		return yy::parser::make_CASE(loc);
@@ -72,14 +72,14 @@
 
 
 void driver::scan_begin() {
-    if (file.empty () || file == "-")
+	if (file.empty() || file == "-")
         yyin = stdin;
-    else if (!(yyin = fopen (file.c_str (), "r"))) {
-        std::cerr << "cannot open " << file << ": " << strerror (errno) << '\n';
-        exit (EXIT_FAILURE);
+	else if (!(yyin = fopen(file.c_str (), "r"))) {
+		std::cerr << "cannot open " << file << ": " << strerror(errno) << '\n';
+		exit(EXIT_FAILURE);
     }
 }
 
 void driver::scan_end() {
-    fclose (yyin);
+	fclose(yyin);
 }
