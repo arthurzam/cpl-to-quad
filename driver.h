@@ -1,6 +1,5 @@
 #ifndef DRIVER_H
 #define DRIVER_H
-#include <string>
 #include <map>
 #include "parser.hpp"
 
@@ -8,19 +7,8 @@
 
 YY_DECL;
 
-#define OPERAND_PLACEHOLDER "@"
 class driver {
 private:
-	struct instruction {
-		const char *op;
-		std::string operand1;
-		std::string operand2;
-		std::string operand3;
-
-		instruction(const char *op, std::string operand1, std::string operand2, std::string operand3):
-			op(op), operand1(std::move(operand1)), operand2(std::move(operand2)), operand3(std::move(operand3))
-		{}
-	};
 	int result;
 	int nextinst = 1;
 	int tmp_counter = 0;
@@ -33,11 +21,11 @@ public:
 
 	std::map<std::string, VAR_TYPE> symtable;
 
-	int parse (const std::string& f);
+	int parse(const std::string& f);
 
 	// Handling the scanner.
-	void scan_begin ();
-	void scan_end ();
+	void scan_begin();
+	void scan_end();
 	// The token's location used by the scanner.
 	yy::location location;
 
@@ -50,6 +38,8 @@ public:
 	int get_nextinst() const {
 		return nextinst;
 	}
+
+	void optimize();
 
 	friend std::ostream &operator<<(std::ostream &os, const driver &drv);
 };

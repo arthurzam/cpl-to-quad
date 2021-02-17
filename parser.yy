@@ -11,29 +11,9 @@
 %code requires {
 	#include <string>
 	#include <vector>
+	#include "declarations.h"
 
 	class driver;
-
-    enum class REL_OPS {
-        EQ = 0,
-        NE,
-        LT,
-        GT,
-        LE,
-        GE,
-    };
-
-    enum class ARITHMETIC_OPS {
-        ADD = 0,
-        SUB,
-        MUL,
-        DIV
-    };
-
-    enum class VAR_TYPE {
-        INT = 0,
-        FLOAT
-    };
 
     struct expression {
         std::string addr;
@@ -149,11 +129,11 @@ assignment_stmt : ID "=" expression ";" {
 				}
 				auto type = iter->second;
 				if (type == $3.type)
-					drv.gen(g_asm_instructions[(int)type].assign, $1, $3.addr);
+					drv.gen(opcodes::typed_ops(type).assign, $1, $3.addr);
 				else if (type == VAR_TYPE::FLOAT) {
 					auto tmp = drv.newtemp();
 					drv.gen("ITOR", tmp, $3.addr);
-					drv.gen(g_asm_instructions[(int)type].assign, $1, tmp);
+					drv.gen(opcodes::typed_ops(type).assign, $1, tmp);
 				} else
 					std::cerr << @$ << ": assigning float into int " << $1 << std::endl;
 			 }
@@ -164,11 +144,11 @@ input_stmt : "input" "(" ID ")" ";" {
 					std::cerr << @3 << ": Unknown identifier " << $3 << std::endl;
 					break;
 				}
-				drv.gen(g_asm_instructions[(int)iter->second].input, $3);
+				drv.gen(opcodes::typed_ops(iter->second).input, $3);
 		   }
 
 output_stmt : "output" "(" expression ")" ";" {
-				 drv.gen(g_asm_instructions[(int)$3.type].output, $3.addr);
+				 drv.gen(opcodes::typed_ops($3.type).output, $3.addr);
 			}
 
 if_stmt : "if" "(" boolexpr ")" mark_pos stmt mark_goto "else" mark_pos stmt {
@@ -186,19 +166,19 @@ while_stmt : "while" mark_pos "(" boolexpr ")" mark_pos stmt {
 				 drv.gen("JUMP", std::to_string($2));
 			 }
 
-switch_stmt : mark_goto "switch" "(" expression ")" "{" caselist "default" ":" mark_pos stmtlist mark_goto "}" {
-				if ($4.type != VAR_TYPE::INT) {
-					std::cerr << @4 << ": expression inside switch must be of int type" << std::endl;
+switch_stmt : "switch" "(" expression ")" mark_goto "{" caselist "default" ":" mark_pos stmtlist mark_goto "}" {
+				if ($3.type != VAR_TYPE::INT) {
+					std::cerr << @3 << ": expression inside switch must be of int type" << std::endl;
 					break;
 				}
 				mergelist($$, std::move($7.breaklist), std::move($7.nextlist), std::move($11.breaklist), std::move($11.nextlist));
 				$$.push_back($12);
-				drv.backpatch({$1}, drv.get_nextinst());
+				drv.backpatch({$5}, drv.get_nextinst());
 
-				auto inst_set = g_asm_instructions[(int)$4.type];
+				auto inst = opcodes::typed_ops($3.type).nql;
 				std::string tmp = drv.newtemp();
 				for (const auto &[addr, value] : $7.cases) {
-					drv.gen(inst_set.nql, tmp, $4.addr, std::move(value));
+					drv.gen(inst, tmp, $3.addr, std::move(value));
 					drv.gen("JMPZ", std::to_string(addr), tmp);
 				}
 				drv.gen("JUMP", std::to_string($10)); // default
@@ -241,7 +221,7 @@ boolfactor : NOT "(" boolexpr ")" {
 				$$.falselist = std::move($3.truelist);
 		   } | expression RELOP expression mark_pos {
 				 auto type = upcast($1.type, $3.type);
-				 auto inst_set = g_asm_instructions[(int)type];
+				 auto inst_set = opcodes::typed_ops(type);
 				 auto tmp = drv.newtemp();
 				 auto [operand1, operand2] = drv.auto_upcast(tmp, $1, $3);
 				 switch ($2) {
@@ -262,7 +242,7 @@ expression : term { $$ = std::move($1); }
 		| expression ADDOP term {
 				$$.type = upcast($1.type, $3.type);
 				$$.addr = drv.newtemp();
-				const char *op = ($2 == ARITHMETIC_OPS::ADD ? g_asm_instructions[(int)$$.type].add : g_asm_instructions[(int)$$.type].sub);
+				const char *op = opcodes::typed_ops($$.type).get_op($2);
 				auto [operand1, operand2] = drv.auto_upcast($$.addr, $1, $3);
 				drv.gen(op, $$.addr, operand1, operand2);
 		}
@@ -271,7 +251,7 @@ term : factor { $$ = std::move($1); }
 	 | term MULOP factor {
 			$$.type = upcast($1.type, $3.type);
 			$$.addr = drv.newtemp();
-			const char *op = ($2 == ARITHMETIC_OPS::MUL ? g_asm_instructions[(int)$$.type].mul : g_asm_instructions[(int)$$.type].div);
+			const char *op = opcodes::typed_ops($$.type).get_op($2);
 			auto [operand1, operand2] = drv.auto_upcast($$.addr, $1, $3);
 			drv.gen(op, $$.addr, operand1, operand2);
 	 }
