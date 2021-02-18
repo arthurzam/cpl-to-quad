@@ -15,8 +15,8 @@
 
 	class driver;
 
-    struct expression {
-        std::string addr;
+	struct expression {
+		std::string addr;
 		VAR_TYPE type;
     };
 
@@ -131,7 +131,7 @@ assignment_stmt : ID "=" expression ";" {
 				if (type == $3.type)
 					drv.gen(opcodes::typed_ops(type).assign, $1, $3.addr);
 				else if (type == VAR_TYPE::FLOAT) {
-					auto tmp = drv.newtemp();
+					auto tmp = drv.newtemp(VAR_TYPE::FLOAT);
 					drv.gen("ITOR", tmp, $3.addr);
 					drv.gen(opcodes::typed_ops(type).assign, $1, tmp);
 				} else
@@ -176,7 +176,7 @@ switch_stmt : "switch" "(" expression ")" mark_goto "{" caselist "default" ":" m
 				drv.backpatch({$5}, drv.get_nextinst());
 
 				auto inst = opcodes::typed_ops($3.type).nql;
-				std::string tmp = drv.newtemp();
+				std::string tmp = drv.newtemp(VAR_TYPE::INT);
 				for (const auto &[addr, value] : $7.cases) {
 					drv.gen(inst, tmp, $3.addr, std::move(value));
 					drv.gen("JMPZ", std::to_string(addr), tmp);
@@ -222,8 +222,8 @@ boolfactor : NOT "(" boolexpr ")" {
 		   } | expression RELOP expression mark_pos {
 				 auto type = upcast($1.type, $3.type);
 				 auto inst_set = opcodes::typed_ops(type);
-				 auto tmp = drv.newtemp();
-				 auto [operand1, operand2] = drv.auto_upcast(tmp, $1, $3);
+				 auto tmp = drv.newtemp(VAR_TYPE::INT);
+				 auto [operand1, operand2] = drv.auto_upcast(drv.newtemp(VAR_TYPE::FLOAT), $1, $3);
 				 switch ($2) {
 					 case REL_OPS::EQ: drv.gen(inst_set.eql, tmp, operand1, operand2); break;
 					 case REL_OPS::NE: drv.gen(inst_set.nql, tmp, operand1, operand2); break;
@@ -241,7 +241,7 @@ boolfactor : NOT "(" boolexpr ")" {
 expression : term { $$ = std::move($1); }
 		| expression ADDOP term {
 				$$.type = upcast($1.type, $3.type);
-				$$.addr = drv.newtemp();
+				$$.addr = drv.newtemp($$.type);
 				const char *op = opcodes::typed_ops($$.type).get_op($2);
 				auto [operand1, operand2] = drv.auto_upcast($$.addr, $1, $3);
 				drv.gen(op, $$.addr, operand1, operand2);
@@ -250,7 +250,7 @@ expression : term { $$ = std::move($1); }
 term : factor { $$ = std::move($1); }
 	 | term MULOP factor {
 			$$.type = upcast($1.type, $3.type);
-			$$.addr = drv.newtemp();
+			$$.addr = drv.newtemp($$.type);
 			const char *op = opcodes::typed_ops($$.type).get_op($2);
 			auto [operand1, operand2] = drv.auto_upcast($$.addr, $1, $3);
 			drv.gen(op, $$.addr, operand1, operand2);
@@ -261,11 +261,11 @@ factor : "(" expression ")" { $$ = std::move($2); }
             if ($1 == $3.type) {
 				$$ = std::move($3);
             } else if ($1 == VAR_TYPE::INT && $3.type == VAR_TYPE::FLOAT) {
-                $$.addr = drv.newtemp();
+				$$.addr = drv.newtemp(VAR_TYPE::INT);
                 $$.type = $1;
 				drv.gen("RTOI", $$.addr, std::move($3.addr));
             } else if ($1 == VAR_TYPE::FLOAT && $3.type == VAR_TYPE::INT) {
-                $$.addr = drv.newtemp();
+				$$.addr = drv.newtemp(VAR_TYPE::FLOAT);
                 $$.type = $1;
 				drv.gen("ITOR", $$.addr, std::move($3.addr));
             }
@@ -279,11 +279,11 @@ factor : "(" expression ")" { $$ = std::move($2); }
 			$$.addr = std::move($1);
 	   } | NUM_INT {
             $$.type = VAR_TYPE::INT;
-            $$.addr = drv.newtemp();
+			$$.addr = drv.newtemp(VAR_TYPE::INT);
 			drv.gen("IASN", $$.addr, std::to_string($1));
 	   } | NUM_FLOAT {
            $$.type = VAR_TYPE::FLOAT;
-           $$.addr = drv.newtemp();
+		   $$.addr = drv.newtemp(VAR_TYPE::FLOAT);
 		   drv.gen("RASN", $$.addr, std::to_string($1));
 	   }
 

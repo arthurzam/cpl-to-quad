@@ -24,6 +24,9 @@ struct dag_graph {
 	void jmp_jmp_optimize();
 
 	std::vector<instruction> convert() &&;
+
+	template<typename Func>
+	void blocks_dfs(Func &&func);
 };
 
 static std::vector<int> calc_block_starts(const std::vector<instruction> &code) {
@@ -47,10 +50,10 @@ static auto find_position(const std::vector<int> &dividers, const std::string &a
 }
 
 template<typename Func>
-static void blocks_dfs(const std::vector<basic_block> &blocks, basic_block *first, Func &&func) {
-	for (const basic_block &block : blocks)
+void dag_graph::blocks_dfs(Func &&func) {
+	for (auto &block : blocks)
 		block.visited = false;
-	std::stack<basic_block *> ptrs;
+	std::stack<basic_block *, std::vector<basic_block *>> ptrs;
 	ptrs.push(first);
 	blocks.back().visited = true;
 	while (!ptrs.empty()) {
@@ -66,7 +69,7 @@ static void blocks_dfs(const std::vector<basic_block> &blocks, basic_block *firs
 		if (block->follow_block)
 			ptrs.push(block->follow_block);
 	}
-	func(const_cast<basic_block *>(&blocks.back()));
+	func(&blocks.back());
 }
 
 dag_graph::dag_graph(std::vector<instruction> &&code) {
@@ -134,7 +137,7 @@ static void blocks_add_jumps(const std::vector<basic_block *> &new_order) {
 
 std::vector<instruction> dag_graph::convert() && {
 	std::vector<basic_block *> new_order;
-	blocks_dfs(blocks, first, [&new_order](basic_block *block){
+	blocks_dfs([&new_order](basic_block *block){
 		new_order.push_back(block);
 	});
 	blocks_add_jumps(new_order);

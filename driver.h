@@ -30,7 +30,7 @@ public:
 	yy::location location;
 
 	void gen(const char *op, const std::string &operand1 = "", const std::string &operand2 = "", const std::string &operand3 = "");
-	std::string newtemp();
+	std::string newtemp(VAR_TYPE type);
 	void backpatch(const std::vector<int> &list, int addr);
 
 	std::pair<const std::string&, const std::string&> auto_upcast(const std::string &tmp, const expression &first, const expression &second);

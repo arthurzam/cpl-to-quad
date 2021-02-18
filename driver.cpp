@@ -23,8 +23,9 @@ void driver::gen(const char *op, const std::string &operand1, const std::string 
 	this->code.emplace_back(op, operand1, operand2, operand3);
 }
 
-std::string driver::newtemp() {
-	return "_t" + std::to_string(++tmp_counter);
+std::string driver::newtemp(VAR_TYPE type) {
+	const char *prefix = (type == VAR_TYPE::INT ? "_i" : "_f");
+	return prefix + std::to_string(++tmp_counter);
 }
 
 void instruction::backpatch(const std::string &addr) {
@@ -56,11 +57,11 @@ std::pair<const std::string &, const std::string &> driver::auto_upcast(const st
 std::ostream &operator<<(std::ostream &os, const instruction &inst) {
 	os << inst.op;
 	if (inst.operand1.size() > 0)
-		os << " " << inst.operand1;
+		os << '\t' << inst.operand1;
 	if (inst.operand2.size() > 0)
-		os << " " << inst.operand2;
+		os << '\t' << inst.operand2;
 	if (inst.operand3.size() > 0)
-		os << " " << inst.operand3;
+		os << '\t' << inst.operand3;
 	return os;
 }
 
