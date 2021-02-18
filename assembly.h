@@ -5,16 +5,16 @@
 
 
 namespace opcodes {
-	struct asm_instruction {
-		const char *assign;
-		const char *output, *input;
-		const char *eql, *nql, *lss, *grt;
-		const char *add, *sub, *mul, *div;
+    struct asm_instruction {
+        const char *assign;
+        const char *output, *input;
+        const char *eql, *nql, *lss, *grt;
+        const char *add, *sub, *mul, *div;
 
-		const char *get_op(ARITHMETIC_OPS op) const;
-	};
+        const char *get_op(ARITHMETIC_OPS op) const;
+    };
 
-	const asm_instruction& typed_ops(VAR_TYPE type);
+    const asm_instruction& typed_ops(VAR_TYPE type);
 };
 
 #endif // ASSEMBLY_H

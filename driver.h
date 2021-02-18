@@ -11,41 +11,41 @@
  * @brief Main driver for controlling the parser, scanner and optimizer
  */
 class driver {
-	friend YY_DECL;
+    friend YY_DECL;
 private:
-	int result;
-	int nextinst = 1;
-	int tmp_counter = 0;
-	bool is_ok = true;
-	yy::location location;
+    int result;
+    int nextinst = 1;
+    int tmp_counter = 0;
+    bool is_ok = true;
+    yy::location location;
 
-	std::vector<instruction> code;
-	std::string file;
+    std::vector<instruction> code;
+    std::string file;
 
-	void scan_begin();
-	void scan_end();
+    void scan_begin();
+    void scan_end();
 public:
-	std::map<std::string, VAR_TYPE> symtable;
+    std::map<std::string, VAR_TYPE> symtable;
 
-	driver(const std::string &f);
-	bool parse();
-	void optimize();
-	friend std::ostream &operator<<(std::ostream &os, const driver &drv);
+    driver(const std::string &f);
+    bool parse();
+    void optimize();
+    friend std::ostream &operator<<(std::ostream &os, const driver &drv);
 
-	std::pair<std::string, std::string> auto_upcast(const std::string &tmp, const expression &first, const expression &second);
-	void gen(const char *op, const std::string &operand1 = "", const std::string &operand2 = "", const std::string &operand3 = "");
-	std::string newtemp(VAR_TYPE type);
-	void backpatch(const std::vector<int> &list, int addr);
+    std::pair<std::string, std::string> auto_upcast(const std::string &tmp, const expression &first, const expression &second);
+    void gen(const char *op, const std::string &operand1 = "", const std::string &operand2 = "", const std::string &operand3 = "");
+    std::string newtemp(VAR_TYPE type);
+    void backpatch(const std::vector<int> &list, int addr);
 
-	std::ostream &error(const yy::location &loc);
-	operator bool() const {
-		return is_ok;
-	}
+    std::ostream &error(const yy::location &loc);
+    operator bool() const {
+        return is_ok;
+    }
 
 
-	int get_nextinst() const {
-		return nextinst;
-	}
+    int get_nextinst() const {
+        return nextinst;
+    }
 
 };
 #endif // ! DRIVER_H
