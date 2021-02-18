@@ -12,6 +12,7 @@ private:
 	int result;
 	int nextinst = 1;
 	int tmp_counter = 0;
+	bool is_ok = true;
 
 	std::vector<instruction> code;
 	std::string file;
@@ -33,7 +34,12 @@ public:
 	std::string newtemp(VAR_TYPE type);
 	void backpatch(const std::vector<int> &list, int addr);
 
-	std::pair<const std::string&, const std::string&> auto_upcast(const std::string &tmp, const expression &first, const expression &second);
+	std::ostream &error(const yy::location &loc);
+	operator bool() const {
+		return is_ok;
+	}
+
+	std::pair<std::string, std::string> auto_upcast(const std::string &tmp, const expression &first, const expression &second);
 
 	int get_nextinst() const {
 		return nextinst;

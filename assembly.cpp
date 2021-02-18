@@ -44,5 +44,5 @@ const opcodes::asm_instruction &opcodes::typed_ops(VAR_TYPE type) {
 	if (type == VAR_TYPE::FLOAT)
 		return g_asm_instructions[1];
 	else
-		return g_asm_instructions[1];
+		return g_asm_instructions[0];
 }
