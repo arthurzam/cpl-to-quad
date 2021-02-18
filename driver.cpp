@@ -5,17 +5,18 @@
 #include "parser.hpp"
 
 
-driver::driver() { }
+driver::driver(const std::string &f)
+	: file(f) {
+	location.initialize(&file);
+}
 
-int driver::parse(const std::string &f) {
-  file = f;
-  location.initialize(&file);
-  scan_begin();
-  yy::parser parse(*this);
-  //parse.set_debug_level (true);
-  int res = parse();
-  scan_end();
-  return res;
+bool driver::parse() {
+	scan_begin();
+	yy::parser parse(*this);
+	// parse.set_debug_level(true); // when hell opens, uncommenting this line will trace all and might bring us salvation
+	int res = parse();
+	scan_end();
+	return is_ok = is_ok && (res == 0);
 }
 
 void driver::gen(const char *op, const std::string &operand1, const std::string &operand2, const std::string &operand3) {
@@ -61,17 +62,17 @@ std::pair<std::string, std::string> driver::auto_upcast(const std::string &tmp, 
 
 std::ostream &operator<<(std::ostream &os, const instruction &inst) {
 	os << inst.op;
-	if (inst.operand1.size() > 0)
+	if (!inst.operand1.empty())
 		os << '\t' << inst.operand1;
-	if (inst.operand2.size() > 0)
+	if (!inst.operand2.empty())
 		os << '\t' << inst.operand2;
-	if (inst.operand3.size() > 0)
+	if (!inst.operand3.empty())
 		os << '\t' << inst.operand3;
-	return os;
+	return os << std::endl;
 }
 
 std::ostream &operator<<(std::ostream &os, const driver &drv) {
 	for (const auto &inst : drv.code)
-		os << inst << std::endl;
+		os << inst;
 	return os;
 }

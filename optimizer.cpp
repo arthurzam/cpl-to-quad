@@ -54,8 +54,8 @@ void dag_graph::blocks_dfs(Func &&func) {
 	for (auto &block : blocks)
 		block.visited = false;
 	std::stack<basic_block *, std::vector<basic_block *>> ptrs;
-	ptrs.push(first);
 	blocks.back().visited = true;
+	ptrs.push(first);
 	while (!ptrs.empty()) {
 		basic_block *block = ptrs.top();
 		ptrs.pop();
@@ -161,7 +161,7 @@ std::ostream &operator<<(std::ostream &os, const dag_graph &g) {
 	for (const auto &b : g.blocks) {
 		os << '[' << (pos++) << ']' << std::endl;
 		for (const auto &inst : b.code)
-			os << inst << std::endl;
+			os << inst;
 
 		if (b.follow_block)
 			os << (b.follow_block - &g.blocks[0]);

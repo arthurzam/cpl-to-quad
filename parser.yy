@@ -5,7 +5,6 @@
 %define api.token.constructor
 %define parse.assert
 %defines
-%define parse.trace
 %param { driver& drv }
 
 %code requires {
@@ -87,12 +86,13 @@
 %token SWITCH  "switch"
 %token WHILE   "while"
 
+%token OR      "||"
+%token AND     "&&"
+%token NOT     "!"
+
 %token <REL_OPS> RELOP
 %token <ARITHMETIC_OPS> ADDOP
 %token <ARITHMETIC_OPS> MULOP
-%token OR
-%token AND
-%token NOT
 %token <VAR_TYPE> CAST
 
 %token <std::string> ID
@@ -103,10 +103,10 @@
 %type <VAR_TYPE> type
 %type <expression> expression term factor
 %type <boolexpr> boolexpr boolterm boolfactor
-%type <int> mark_pos mark_goto
 %type <addrlist> while_stmt switch_stmt break_stmt
 %type <stmtaddrs> stmt stmtlist stmt_block if_stmt
 %type <caselist> caselist
+%type <int> mark_pos mark_goto
 
 %%
 program : declarations stmt_block mark_pos {
@@ -119,7 +119,7 @@ declarations : %empty |
 
 declaration : idlist ":" type ";" {
 				for (const std::string &id : $1) {
-					if ( const auto& [iter, flag] = drv.symtable.emplace(std::move(id), $3); !flag) {
+					if (const auto& [iter, flag] = drv.symtable.emplace(std::move(id), $3); !flag) {
 						drv.error(@1) << "symbol '" << iter->first << "' was already declared" << std::endl;
                     }
                 }
@@ -158,7 +158,7 @@ assignment_stmt : ID "=" expression ";" {
 						drv.gen("ITOR", $1, $3);
 				} else
 					drv.error(@$) << "assigning float into int " << $1 << std::endl;
-			 }
+			 } | ID "=" error ";" { drv.error(@3) << "bad expression" << std::endl; }
 
 input_stmt : "input" "(" ID ")" ";" {
 				auto iter = drv.symtable.find($3);
@@ -178,14 +178,14 @@ if_stmt : "if" "(" boolexpr ")" mark_pos stmt mark_goto "else" mark_pos stmt {
 			mergelist($$.nextlist, std::move($6.nextlist), std::move($10.nextlist));
 			$$.nextlist.push_back($7);
 			mergelist($$.breaklist, std::move($6.breaklist), std::move($10.breaklist));
-		}
+		} | "if" "(" error ")" stmt "else" stmt { drv.error(@3) << "bad expression inside if" << std::endl; }
 
 while_stmt : "while" mark_pos "(" boolexpr ")" mark_pos stmt {
 				 drv.backpatch($7.nextlist, $2);
 				 drv.backpatch($4.truelist, $6);
 				 mergelist($$, std::move($4.falselist), std::move($7.breaklist)); // eat all breaks
 				 drv.gen("JUMP", std::to_string($2));
-			 }
+			 } | "while" mark_pos "(" error ")" stmt { drv.error(@4) << "bad expression inside while" << std::endl; }
 
 switch_stmt : "switch" "(" expression ")" mark_goto "{" caselist "default" ":" mark_pos stmtlist mark_goto "}" {
 				if ($3.type != VAR_TYPE::INT) {
@@ -212,7 +212,8 @@ switch_stmt : "switch" "(" expression ")" mark_goto "{" caselist "default" ":" m
 					}
 				}
 				drv.gen("JUMP", std::to_string($10)); // default
-			}
+			} | "switch" "(" expression ")" mark_goto "{" caselist "}" { drv.error(@$) << "missing default in switch" << std::endl; }
+			| "switch" "(" error ")" "{" caselist "default" ":" mark_pos stmtlist "}" { drv.error(@3) << "bad expression" << std::endl; }
 
 caselist : caselist "case" NUM_INT ":" mark_pos stmtlist {
 				mergelist($$.breaklist, std::move($1.breaklist), std::move($6.breaklist));
@@ -222,7 +223,10 @@ caselist : caselist "case" NUM_INT ":" mark_pos stmtlist {
 				$$.cases.emplace_back($5, $3);
 		} | caselist "case" NUM_FLOAT ":" stmtlist {
 				drv.error(@3) << "expression of case must be of int type" << std::endl;
-				$$ = std::move($1);
+		} | caselist "case" error ":" stmtlist {
+				drv.error(@3) << "unknown expression for case" << std::endl;
+		} | caselist "case" ":" stmtlist {
+				drv.error(@2) << "missing value for case" << std::endl;
 		} | %empty { }
 
 break_stmt : "break" ";" mark_goto { $$.push_back($3); }
@@ -236,19 +240,19 @@ stmtlist : stmtlist mark_pos stmt {
 				mergelist($$.breaklist, std::move($1.breaklist), std::move($3.breaklist));
 		 } | %empty { }
 
-boolexpr : boolexpr OR mark_pos boolterm {
+boolexpr : boolexpr "||" mark_pos boolterm {
 				drv.backpatch($1.falselist, $3);
 				$$.falselist = std::move($4.falselist);
 				mergelist($$.truelist, std::move($1.truelist), std::move($4.truelist));
 		} | boolterm { $$ = std::move($1); }
 
-boolterm : boolterm AND mark_pos boolfactor {
+boolterm : boolterm "&&" mark_pos boolfactor {
 				 drv.backpatch($1.truelist, $3);
 				 $$.truelist = std::move($4.truelist);
 				 mergelist($$.falselist, std::move($1.falselist), std::move($4.falselist));
 		} | boolfactor { $$ = std::move($1); }
 
-boolfactor : NOT "(" boolexpr ")" {
+boolfactor : "!" "(" boolexpr ")" {
 				$$.truelist = std::move($3.falselist);
 				$$.falselist = std::move($3.truelist);
 		   } | expression RELOP expression mark_pos {
@@ -319,7 +323,6 @@ term : factor { $$ = std::move($1); }
 				break;
 			}
 			$$.type = upcast($1.type, $3.type);
-			auto tmp = drv.newtemp($$.type);
 			if ($1.is_const() && $1.type != $$.type) {
 				$1.type = $$.type;
 				$1.addr = (float)std::get<int>($1.addr);
@@ -362,6 +365,7 @@ term : factor { $$ = std::move($1); }
 	 }
 
 factor : "(" expression ")" { $$ = std::move($2); }
+	   | "(" error ")" { drv.error(@2) << "bad expression" << std::endl; }
        | CAST "(" expression ")" {
             if ($1 == $3.type) {
 				$$ = std::move($3);
@@ -384,6 +388,8 @@ factor : "(" expression ")" { $$ = std::move($2); }
 					$$.addr = std::move(tmp);
 				}
             }
+	   } | CAST "(" error ")" {
+			drv.error(@3) << "bad expression" << std::endl;
 	   } | ID {
 			auto iter = drv.symtable.find($1);
 			if (iter == drv.symtable.end()) {
