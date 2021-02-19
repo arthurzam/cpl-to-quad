@@ -25,7 +25,7 @@ FLEX_TARGET(CPL_Scanner lexer.l
 ADD_FLEX_BISON_DEPENDENCY(CPL_Scanner CPL_Parser)
 
 add_executable(cpq
-    main.cpp
+    cpq.cpp
     driver.h
     driver.cpp
     assembly.cpp

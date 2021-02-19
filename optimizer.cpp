@@ -15,11 +15,11 @@ struct basic_block {
     mutable int addr;
 };
 
-struct dag_graph {
+struct flow_graph {
     std::vector<basic_block> blocks;
     basic_block *first;
 
-    dag_graph(std::vector<instruction> &&code);
+    flow_graph(std::vector<instruction> &&code);
 
     void jmp_jmp_optimize();
 
@@ -29,6 +29,9 @@ struct dag_graph {
     void blocks_dfs(Func &&func);
 };
 
+/**
+ * return list of position in code where a new basic block starts
+ */
 static std::vector<int> calc_block_starts(const std::vector<instruction> &code) {
     std::set<int> dividers;
     int pos = 0;
@@ -45,12 +48,12 @@ static std::vector<int> calc_block_starts(const std::vector<instruction> &code) 
     return {dividers.begin(), dividers.end()};
 }
 
-static auto find_position(const std::vector<int> &dividers, const std::string &addr) {
-    return std::distance(dividers.begin(), std::upper_bound(dividers.begin(), dividers.end(), std::stoi(addr) - 1));
-}
-
+/**
+ * traverse the flow graph starting from first node, and run the func on each node
+ * the final block (which holds HALT) will always be the last
+ */
 template<typename Func>
-void dag_graph::blocks_dfs(Func &&func) {
+void flow_graph::blocks_dfs(Func &&func) {
     for (auto &block : blocks)
         block.visited = false;
     std::stack<basic_block *, std::vector<basic_block *>> ptrs;
@@ -72,8 +75,15 @@ void dag_graph::blocks_dfs(Func &&func) {
     func(&blocks.back());
 }
 
-dag_graph::dag_graph(std::vector<instruction> &&code) {
+/**
+ * construct a full flow graph based on the unoptimized code
+ */
+flow_graph::flow_graph(std::vector<instruction> &&code) {
     const auto dividers = calc_block_starts(code);
+    auto find_position = [&dividers](const std::string &addr) {
+        return std::distance(dividers.begin(), std::upper_bound(dividers.begin(), dividers.end(), std::stoi(addr) - 1));
+    };
+
     auto prev = code.begin();
     blocks.resize(dividers.size());
     auto block = blocks.begin();
@@ -82,10 +92,10 @@ dag_graph::dag_graph(std::vector<instruction> &&code) {
         std::move(prev, iter, std::back_inserter(block->code));
         auto last = block->code.back();
         if (last.op == "JUMP") {
-            block->follow_block = &blocks[find_position(dividers, last.operand1)];
+            block->follow_block = &blocks[find_position(last.operand1)];
         } else {
             if (last.op == "JMPZ")
-                block->jmpz_block = &blocks[find_position(dividers, last.operand1)];
+                block->jmpz_block = &blocks[find_position(last.operand1)];
             if (curr != code.size())
                 block->follow_block = &*(block + 1);
         }
@@ -96,7 +106,12 @@ dag_graph::dag_graph(std::vector<instruction> &&code) {
     first = &blocks[0];
 }
 
-void dag_graph::jmp_jmp_optimize() {
+/**
+ * Basic JUMP optimization:
+ * every JUMP/JMPZ to another JUMP directive is reduced to the final destination
+ * if JMPZ to the following block, replace with JUMP
+ */
+void flow_graph::jmp_jmp_optimize() {
     for (auto &block : blocks) {
         while (block.follow_block && block.follow_block->code.front().op == "JUMP")
             block.follow_block = block.follow_block->follow_block;
@@ -113,6 +128,11 @@ void dag_graph::jmp_jmp_optimize() {
         first = first->follow_block;
 }
 
+/**
+ * based on the new_order list, prepares the code of the blocks for reorganization.
+ * If the blocks will be one after another, remove the JUMP (to use fall through)
+ * If the blocks won't be one after another, add a JUMP
+ */
 static void blocks_add_jumps(const std::vector<basic_block *> &new_order) {
     int curr_addr = 0;
     for (auto iter = new_order.cbegin(); iter != new_order.cend(); iter++) {
@@ -135,7 +155,10 @@ static void blocks_add_jumps(const std::vector<basic_block *> &new_order) {
     }
 }
 
-std::vector<instruction> dag_graph::convert() && {
+/**
+ * convert the current flow graph into the instructions list
+ */
+std::vector<instruction> flow_graph::convert() && {
     std::vector<basic_block *> new_order;
     blocks_dfs([&new_order](basic_block *block){
         new_order.push_back(block);
@@ -155,7 +178,10 @@ std::vector<instruction> dag_graph::convert() && {
     return result;
 }
 
-std::ostream &operator<<(std::ostream &os, const dag_graph &g) {
+/**
+ * enable outputting the whole flow graph for debugging purposes
+ */
+static std::ostream &operator<<(std::ostream &os, const flow_graph &g) {
     int pos = 0;
     os << "Start at " << (g.first - &g.blocks[0]) << std::endl << std::endl;
     for (const auto &b : g.blocks) {
@@ -178,7 +204,7 @@ std::ostream &operator<<(std::ostream &os, const dag_graph &g) {
 }
 
 void driver::optimize() {
-    dag_graph graph(std::move(code));
+    flow_graph graph(std::move(code));
     graph.jmp_jmp_optimize();
 //    std::cout << graph;
     code = std::move(graph).convert();

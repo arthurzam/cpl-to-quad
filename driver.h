@@ -36,16 +36,13 @@ public:
     void gen(const char *op, const std::string &operand1 = "", const std::string &operand2 = "", const std::string &operand3 = "");
     std::string newtemp(VAR_TYPE type);
     void backpatch(const std::vector<int> &list, int addr);
+    int get_nextinst() const {
+        return nextinst;
+    }
 
     std::ostream &error(const yy::location &loc);
     operator bool() const {
         return is_ok;
     }
-
-
-    int get_nextinst() const {
-        return nextinst;
-    }
-
 };
 #endif // ! DRIVER_H

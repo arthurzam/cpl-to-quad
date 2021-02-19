@@ -32,11 +32,21 @@
             }
         }
 
-        template<int N> struct const_equals {
-            bool operator()(int arg) const { return arg == N; }
-            bool operator()(float arg) const { return arg == float(N); }
-            bool operator()(const std::string &) { return false; }
-        };
+        template<int N> bool equals() const {
+            struct const_equals {
+                bool operator()(int arg) const { return arg == N; }
+                bool operator()(float arg) const { return arg == float(N); }
+                bool operator()(const std::string &) { return false; }
+            };
+            return std::visit(const_equals(), addr);
+        }
+
+        void try_const_cast(VAR_TYPE type) {
+            if (is_const() && this->type != type) {
+                this->type = type;
+                addr = (float)std::get<int>(addr);
+            }
+        }
     };
 
     using pos = int;
@@ -118,7 +128,7 @@ declarations : %empty |
              declarations declaration;
 
 declaration : idlist ":" type ";" {
-                for (const std::string &id : $1) {
+                for (std::string &id : $1) {
                     if (const auto& [iter, flag] = drv.symtable.emplace(std::move(id), $3); !flag) {
                         drv.error(@1) << "symbol '" << iter->first << "' was already declared" << std::endl;
                     }
@@ -158,7 +168,7 @@ assignment_stmt : ID "=" expression ";" {
                         drv.gen("ITOR", $1, $3);
                 } else
                     drv.error(@$) << "assigning float into int " << $1 << std::endl;
-		} | ID "=" error ";" { drv.error(@3) << "bad expression" << std::endl; }
+        } | ID "=" error ";" { drv.error(@3) << "bad expression" << std::endl; }
 
 input_stmt : "input" "(" ID ")" ";" {
                 auto iter = drv.symtable.find($3);
@@ -185,7 +195,7 @@ while_stmt : "while" mark_pos "(" boolexpr ")" mark_pos stmt {
                  drv.backpatch($4.truelist, $6);
                  mergelist($$, std::move($4.falselist), std::move($7.breaklist)); // eat all breaks
                  drv.gen("JUMP", std::to_string($2));
-		   } | "while" mark_pos "(" error ")" stmt { drv.error(@4) << "bad expression inside while" << std::endl; }
+           } | "while" mark_pos "(" error ")" stmt { drv.error(@4) << "bad expression inside while" << std::endl; }
 
 switch_stmt : "switch" "(" expression ")" mark_goto "{" caselist "default" ":" mark_pos stmtlist mark_goto "}" {
                 if ($3.type != VAR_TYPE::INT) {
@@ -244,54 +254,70 @@ boolexpr : boolexpr "||" mark_pos boolterm {
                 drv.backpatch($1.falselist, $3);
                 $$.falselist = std::move($4.falselist);
                 mergelist($$.truelist, std::move($1.truelist), std::move($4.truelist));
-		 } | boolterm { $$ = std::move($1); }
+         } | boolterm { $$ = std::move($1); }
 
 boolterm : boolterm "&&" mark_pos boolfactor {
                  drv.backpatch($1.truelist, $3);
                  $$.truelist = std::move($4.truelist);
                  mergelist($$.falselist, std::move($1.falselist), std::move($4.falselist));
-		 } | boolfactor { $$ = std::move($1); }
+         } | boolfactor { $$ = std::move($1); }
 
 boolfactor : "!" "(" boolexpr ")" {
                 $$.truelist = std::move($3.falselist);
                 $$.falselist = std::move($3.truelist);
-           } | expression RELOP expression mark_pos {
+           } | expression RELOP expression {
                  auto type = upcast($1.type, $3.type);
-                 auto inst_set = opcodes::typed_ops(type);
-                 auto tmp = drv.newtemp(VAR_TYPE::INT);
-                 auto [operand1, operand2] = drv.auto_upcast(drv.newtemp(VAR_TYPE::FLOAT), $1, $3); // Fix: plan the passing
-                 switch ($2) {
-                     case REL_OPS::EQ: drv.gen(inst_set.eql, tmp, operand1, operand2); break;
-                     case REL_OPS::NE: drv.gen(inst_set.nql, tmp, operand1, operand2); break;
-                     case REL_OPS::LT: drv.gen(inst_set.lss, tmp, operand1, operand2); break;
-                     case REL_OPS::GT: drv.gen(inst_set.grt, tmp, operand1, operand2); break;
-                     case REL_OPS::LE: drv.gen(inst_set.grt, tmp, operand2, operand1); break;
-                     case REL_OPS::GE: drv.gen(inst_set.lss, tmp, operand2, operand1); break;
+                 $1.try_const_cast(type);
+                 $3.try_const_cast(type);
+                 if ($1.is_const() && $3.is_const()) { // can be reduced to a constant operation
+                     auto op = [](REL_OPS op, auto val1, auto val2) {
+                         switch (op) {
+                             case REL_OPS::EQ: return val1 == val2;
+                             case REL_OPS::NE: return val1 != val2;
+                             case REL_OPS::LT: return val1 < val2;
+                             case REL_OPS::GT: return val1 > val2;
+                             case REL_OPS::LE: return val1 <= val2;
+                             case REL_OPS::GE: return val1 >= val2;
+                             default: return false;
+                         }
+                     };
+                     bool jump = (type == VAR_TYPE::INT ? op($2, std::get<int>($1.addr), std::get<int>($3.addr)) :
+                                                          op($2, std::get<float>($1.addr), std::get<float>($3.addr)));
+                     (jump ? $$.truelist : $$.falselist).push_back(drv.get_nextinst());
+                     drv.gen("JUMP", OPERAND_PLACEHOLDER);
+                 } else {
+                     auto inst_set = opcodes::typed_ops(type);
+                     auto dst = drv.newtemp(VAR_TYPE::INT);
+                     auto tmp = drv.newtemp(VAR_TYPE::FLOAT);
+                     auto [operand1, operand2] = drv.auto_upcast(tmp, $1, $3);
+                     switch ($2) {
+                         case REL_OPS::EQ: drv.gen(inst_set.eql, dst, operand1, operand2); break;
+                         case REL_OPS::NE: drv.gen(inst_set.nql, dst, operand1, operand2); break;
+                         case REL_OPS::LT: drv.gen(inst_set.lss, dst, operand1, operand2); break;
+                         case REL_OPS::GT: drv.gen(inst_set.grt, dst, operand1, operand2); break;
+                         case REL_OPS::LE: drv.gen(inst_set.grt, dst, operand2, operand1); break;
+                         case REL_OPS::GE: drv.gen(inst_set.lss, dst, operand2, operand1); break;
+                     }
+                     $$.falselist.push_back(drv.get_nextinst());
+                     drv.gen("JMPZ", OPERAND_PLACEHOLDER, dst);
+                     $$.truelist.push_back(drv.get_nextinst());
+                     drv.gen("JUMP", OPERAND_PLACEHOLDER);
                  }
-                 $$.falselist.push_back(drv.get_nextinst());
-                 drv.gen("JMPZ", OPERAND_PLACEHOLDER, std::move(tmp));
-                 $$.truelist.push_back(drv.get_nextinst());
-                 drv.gen("JUMP", OPERAND_PLACEHOLDER);
            }
 
 expression : term { $$ = std::move($1); }
         | expression ADDOP term {
                 $$.type = upcast($1.type, $3.type);
-                if ($1.is_const() && $1.type != $$.type) {
-                    $1.type = $$.type;
-                    $1.addr = (float)std::get<int>($1.addr);
-                } else if ($3.is_const() && $3.type != $$.type) {
-                    $3.type = $$.type;
-                    $3.addr = (float)std::get<int>($3.addr);
-                }
-                if ($1.is_const() && $3.is_const()) {
+                $1.try_const_cast($$.type);
+                $3.try_const_cast($$.type);
+                if ($1.is_const() && $3.is_const()) { // can be reduced to a constant operation
                     auto op = [](auto op, auto a1, auto a2) { return op == ARITHMETIC_OPS::ADD ? a1 + a2 : a1 - a2; };
                     if ($$.type == VAR_TYPE::INT)
                         $$.addr = op($2, std::get<int>($1.addr), std::get<int>($3.addr));
                     else
                         $$.addr = op($2, std::get<float>($1.addr), std::get<float>($3.addr));
                 } else {
-                    if (std::visit(expression::const_equals<0>(), $3.addr)) {
+                    if ($3.equals<0>()) {
                         if ($1.type == $$.type)
                             $$.addr = std::move($1.addr);
                         else {
@@ -299,7 +325,7 @@ expression : term { $$ = std::move($1); }
                             drv.gen("ITOR", tmp, std::get<std::string>($1.addr));
                             $$.addr = std::move(tmp);
                         }
-                    } else if ($2 == ARITHMETIC_OPS::ADD && std::visit(expression::const_equals<0>(), $1.addr)) {
+                    } else if ($2 == ARITHMETIC_OPS::ADD && $1.equals<0>()) {
                         if ($3.type == $$.type)
                             $$.addr = std::move($3.addr);
                         else {
@@ -318,28 +344,23 @@ expression : term { $$ = std::move($1); }
 
 term : factor { $$ = std::move($1); }
      | term MULOP factor {
-            if ($2 == ARITHMETIC_OPS::DIV && std::visit(expression::const_equals<0>(), $3.addr)) {
+            if ($2 == ARITHMETIC_OPS::DIV && $3.equals<0>()) {
                 drv.error(@$) << "division by zero evaluated expression at " << @3 << std::endl;
                 break;
             }
             $$.type = upcast($1.type, $3.type);
-            if ($1.is_const() && $1.type != $$.type) {
-                $1.type = $$.type;
-                $1.addr = (float)std::get<int>($1.addr);
-            } else if ($3.is_const() && $3.type != $$.type) {
-                $3.type = $$.type;
-                $3.addr = (float)std::get<int>($3.addr);
-            }
-            if ($1.is_const() && $3.is_const()) {
+            $1.try_const_cast($$.type);
+            $3.try_const_cast($$.type);
+            if ($1.is_const() && $3.is_const()) { // can be reduced to a constant operation
                 auto op = [](auto op, auto a1, auto a2) { return op == ARITHMETIC_OPS::MUL ? a1 * a2 : a1 / a2; };
                 if ($$.type == VAR_TYPE::INT)
                     $$.addr = op($2, std::get<int>($1.addr), std::get<int>($3.addr));
                 else
                     $$.addr = op($2, std::get<float>($1.addr), std::get<float>($3.addr));
             } else {
-                if (std::visit(expression::const_equals<0>(), $3.addr) || std::visit(expression::const_equals<0>(), $1.addr)) {
+                if ($3.equals<0>() || $1.equals<0>()) {
                     $$.addr = 0;
-                } else if (std::visit(expression::const_equals<1>(), $3.addr)) {
+                } else if ($3.equals<1>()) {
                     if ($1.type == $$.type)
                         $$.addr = std::move($1.addr);
                     else {
@@ -347,7 +368,7 @@ term : factor { $$ = std::move($1); }
                         drv.gen("ITOR", tmp, std::get<std::string>($1.addr));
                         $$.addr = std::move(tmp);
                     }
-                } else if ($2 == ARITHMETIC_OPS::MUL && std::visit(expression::const_equals<1>(), $1.addr)) {
+                } else if ($2 == ARITHMETIC_OPS::MUL && $1.equals<1>()) {
                     if ($3.type == $$.type)
                         $$.addr = std::move($3.addr);
                     else {
@@ -405,8 +426,9 @@ factor : "(" expression ")" { $$ = std::move($2); }
            $$.type = VAR_TYPE::FLOAT;
            $$.addr = $1;
        }
-
+// special marker for marking selected position in code
 mark_pos:  %empty { $$ = drv.get_nextinst(); }
+// special marker for putting a GOTO and marking it for back-patching
 mark_goto: %empty { $$ = drv.get_nextinst(); drv.gen("JUMP", OPERAND_PLACEHOLDER); }
 %%
 void yy::parser::error(const location_type& l, const std::string& m) {
@@ -422,5 +444,6 @@ static VAR_TYPE upcast(VAR_TYPE first, VAR_TYPE second) {
 template<typename T, typename ...Args>
 static void mergelist(std::vector<T> &dst, std::vector<T> &&op1, Args&&... args) {
     dst = std::move(op1);
+    // The next line is quite hard to read, but it uses C++17 fold expressions around a comma
     (dst.insert(dst.end(), std::make_move_iterator(args.begin()), std::make_move_iterator(args.end())), ...);
 }
