@@ -159,6 +159,7 @@ assignment_stmt : ID "=" expression ";" {
                     break;
                 }
                 auto type = iter->second;
+                $3.try_const_cast(type);
                 if (type == $3.type)
                     drv.gen(opcodes::typed_ops(type).assign, $1, $3);
                 else if (type == VAR_TYPE::FLOAT) {
